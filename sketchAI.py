@@ -8,8 +8,13 @@ from PyQt6.QtWidgets import (
 from ai_image_tool import generate_image_with_gpt5
 from ai_objects_tool import generate_game_objects_module 
 
+from ai_router import select_contract, DEFAULT_CONTRACTS
+from ai_fulfill import fulfill_contract
+from object_extract import extract_main_object_to_png
+
 import tempfile, os, traceback, sys, subprocess  
 from pathlib import Path
+from datetime import datetime
 
 
 LAUNCH_BOILER_AFTER_QT: tuple[str, list[str]] | None = None  # (shell_path, args)
@@ -248,7 +253,7 @@ class MainWindow(QMainWindow):
                 pass
 
     def ai_playable_mode(self):
-        # 1) Snapshot canvas to a temp PNG
+        # 1) Snapshot canvas -> temp PNG
         try:
             fd, temp_png = tempfile.mkstemp(prefix="canvas_boiler_", suffix=".png")
             os.close(fd)
@@ -258,15 +263,49 @@ class MainWindow(QMainWindow):
             return
 
         user_hint = self.ai_hint_input.text().strip()
+        sprite_path = None
+        sprite_meta = None
 
-        # 2) Ask GPT-5 to generate a *module* that implements create_game(...)
+        # 2) Extract sprite (useful for physical/character contracts; harmless otherwise)
+        try:
+            sprites_dir = Path(__file__).resolve().parent / "games" / "sprites"
+            sprites_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            candidate_out = str(sprites_dir / f"sprite_{stamp}.png")
+
+            sprite_path, meta = extract_main_object_to_png(temp_png, candidate_out)
+            # meta: {"x": int, "y": int, "w": int, "h": int}
+            sprite_meta = {"path": sprite_path, **meta}
+        except Exception as e:
+            # Sprite extraction is optional; continue without it
+            print("Sprite extraction skipped:", e)
+
+        # 3) Router Step 1: choose a contract from the image + hint
         try:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            module_path = generate_game_objects_module(
-                temp_png,
-                user_hint,
+            choice = select_contract(temp_png, user_hint or "(no hint)", contracts=DEFAULT_CONTRACTS, model="gpt-5", temperature=0.1)
+            contract_id = choice.get("contract_id", "physical_object")
+            confidence = choice.get("confidence", 0.0)
+            reason = choice.get("reason", "")
+            print(f"[Router] contract={contract_id} conf={confidence:.2f} reason={reason}")
+        except Exception as e:
+            traceback.print_exc()
+            QApplication.restoreOverrideCursor()
+            # Fallback to a sensible default
+            contract_id = "physical_object"
+            QMessageBox.warning(self, "Router Failed",
+                                f"Falling back to '{contract_id}'\nReason: {e}")
+
+        # 4) Router Step 2: fulfill the chosen contract -> write objects module
+        try:
+            module_path = fulfill_contract(
+                image_path=temp_png,
+                contract_id=contract_id,
+                user_hint=user_hint,
+                sprite_meta=sprite_meta,        # None is fine if extraction failed
                 out_dir="games",
-                base_name="objects"
+                base_name="objects",
+                model="gpt-5",
             )
         except Exception as e:
             traceback.print_exc()
@@ -278,7 +317,7 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
 
-        # 3) Launch boilerplate runner with the PNG + generated module
+        # 5) Launch boiler with PNG + generated module (+ sprite if available)
         shell_path = str(Path(__file__).resolve().parent / "game_shell.py")
         if not os.path.isfile(shell_path):
             QMessageBox.critical(self, "Error", f"game_shell.py not found at:\n{shell_path}")
@@ -287,12 +326,16 @@ class MainWindow(QMainWindow):
             return
 
         args = [temp_png, "--module", module_path]
+        if sprite_path and sprite_meta:
+            args += ["--sprite", sprite_path, "--sprite-x", str(sprite_meta["x"]), "--sprite-y", str(sprite_meta["y"])]
+
         global LAUNCH_BOILER_AFTER_QT
         LAUNCH_BOILER_AFTER_QT = (shell_path, args)
 
-        # Close Qt and hand off to the boiler
+        # Hand off to the boiler
         self.close()
         QApplication.instance().quit()
+
 
 
 
@@ -305,6 +348,8 @@ def main():
     if LAUNCH_BOILER_AFTER_QT:
         shell_path, args = LAUNCH_BOILER_AFTER_QT
         try:
+            print("launching:", shell_path)
+            print("args:", args)
             subprocess.run([sys.executable, shell_path, *args], check=False)
         finally:
             try: os.remove(args[0])  # remove the temp PNG snapshot

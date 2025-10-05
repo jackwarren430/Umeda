@@ -2,7 +2,7 @@
 game_shell.py — Pygame boilerplate runner
 
 Usage:
-    python game_shell.py path/to/background.png [--module path/to/game_objects.py]
+    python game_shell.py bg.png --module objects.py [--sprite sprite.png --sprite-x N --sprite-y N]
 
 Contract for the *game objects* module (the piece GPT will generate later):
     - It must define a function:
@@ -31,6 +31,30 @@ except Exception:
     np = None  # Only required if your game code uses synthesized audio
 
 SAMPLE_RATE = 44100
+
+def _parse_args(argv):
+    img_path = None
+    module_path = None
+    sprite_path = None
+    sprite_x = None
+    sprite_y = None
+
+    if len(argv) >= 2:
+        img_path = argv[1]
+    i = 2
+    while i < len(argv):
+        if argv[i] == "--module" and i+1 < len(argv):
+            module_path = argv[i+1]; i += 2
+        elif argv[i] == "--sprite" and i+1 < len(argv):
+            sprite_path = argv[i+1]; i += 2
+        elif argv[i] == "--sprite-x" and i+1 < len(argv):
+            sprite_x = int(argv[i+1]); i += 2
+        elif argv[i] == "--sprite-y" and i+1 < len(argv):
+            sprite_y = int(argv[i+1]); i += 2
+        else:
+            i += 1
+    return img_path, module_path, sprite_path, sprite_x, sprite_y
+
 
 def init_audio(force_channels=1):
     try:
@@ -104,34 +128,30 @@ class _FallbackGame:
         txt = self.font.render(self.msg, True, (0, 0, 0))
         screen.blit(txt, (10, 10))
 
-# ---------- Main loop ----------
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python game_shell.py path/to/background.png [--module path/to/game_objects.py]")
+    img_path, module_path, sprite_path, sprite_x, sprite_y = _parse_args(sys.argv)
+    if not img_path or not module_path:
+        print("Usage: python game_shell.py bg.png --module path/to/objects.py "
+              "[--sprite sprite.png --sprite-x N --sprite-y N]")
         sys.exit(2)
 
-    img_path = sys.argv[1]
-    module_path = None
-    if len(sys.argv) >= 4 and sys.argv[2] == "--module":
-        module_path = sys.argv[3]
-
     pygame.init()
-    init_audio(force_channels=1)  # robust init; module may also reconfigure if needed
+    init_audio(force_channels=1)
 
-    # Load image BEFORE convert; set mode; THEN convert (display contract)
+    # Load the image only to determine window size, then create a white background.
     try:
-        background = pygame.image.load(img_path)
+        probe = pygame.image.load(img_path)
+        W, H = probe.get_size()
     except Exception as e:
         print("Failed to load image:", e)
         sys.exit(1)
 
-    W, H = background.get_size()
     screen = pygame.display.set_mode((W, H))
     pygame.display.set_caption("Pygame Boiler")
+    background = pygame.Surface((W, H)).convert()
+    background.fill((255, 255, 255))
 
-    background = background.convert_alpha() if background.get_alpha() else background.convert()
-
-    # Prepare context for user code
+    # ---- Build context passed to generated module ----
     context = {
         "audio": {
             "SAMPLE_RATE": SAMPLE_RATE,
@@ -141,21 +161,36 @@ def main():
         "image_path": img_path,
     }
 
-    # Load game module or fallback
-    game = None
-    if module_path:
+    # Optional sprite (for physical/character/vehicle contracts)
+    if sprite_path and os.path.isfile(sprite_path):
         try:
-            mod = load_game_module(module_path)
-            if hasattr(mod, "create_game"):
-                game = mod.create_game(screen, background, context)  # type: ignore[attr-defined]
+            sp = pygame.image.load(sprite_path).convert_alpha()
+            rect = sp.get_rect()
+            if sprite_x is not None and sprite_y is not None:
+                rect.topleft = (sprite_x, sprite_y)
             else:
-                raise RuntimeError("Module has no create_game(screen, background, context)")
+                rect.center = (W // 2, H // 2)
+            context["sprite"] = {
+                "path": sprite_path,
+                "surface": sp,
+                "rect": rect,
+                "meta": {"x": rect.x, "y": rect.y, "w": rect.w, "h": rect.h},
+            }
+            print(f"[shell] sprite loaded @ {rect.topleft} from {sprite_path}")
         except Exception as e:
-            print(f"Failed to load module '{module_path}': {e}\nUsing fallback demo.")
-            game = _FallbackGame(screen, background, context)
-    else:
+            print("[shell] failed to load sprite:", e)
+
+    # ---- Load generated module and create the game object ----
+    try:
+        mod = load_game_module(module_path)
+        if not hasattr(mod, "create_game"):
+            raise RuntimeError("Module has no create_game(screen, background_surf, context)")
+        game = mod.create_game(screen, background, context)  # type: ignore[attr-defined]
+    except Exception as e:
+        print(f"Failed to load module '{module_path}': {e}\nUsing fallback demo.")
         game = _FallbackGame(screen, background, context)
 
+    # ---- Main loop ----
     clock = pygame.time.Clock()
     running = True
     while running:
@@ -177,7 +212,6 @@ def main():
         except Exception as ex:
             print("update error:", ex)
 
-        # Draw pass: background first, then game overlays/objects
         screen.blit(background, (0, 0))
         try:
             game.draw(screen)

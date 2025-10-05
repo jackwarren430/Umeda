@@ -6,14 +6,19 @@ from PyQt6.QtWidgets import (
     QMessageBox, QLineEdit
 )
 from ai_image_tool import generate_image_with_gpt5
-from ai_objects_tool import generate_game_objects_module 
 
 from ai_router import select_contract, DEFAULT_CONTRACTS
-from ai_fulfill import fulfill_contract
-from object_extract import extract_main_object_to_png
+from ai_fulfill import fulfill_contract, CONTRACT_SPECS
+from ai_component_graph import generate_component_graph
+from object_extract import extract_main_object_to_png, extract_component_from_bbox
 
 import tempfile, os, traceback, sys, subprocess  
 from pathlib import Path
+import json
+try:
+    import yaml  # type: ignore
+except ImportError:
+    yaml = None
 from datetime import datetime
 
 
@@ -232,9 +237,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to snapshot canvas:\n{e}")
             return
 
+        user_hint = self.ai_hint_input.text().strip()
         prompt = ("Generate a cleaned up version of this image. "
                   "Keep everything the same, just make the lines straight "
                   "(or smoothly curved when appropriate) and the text look nice.")
+        if user_hint:
+            prompt += f"\nAdditional context from the user: {user_hint}"
         try:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             result = generate_image_with_gpt5(temp_in_path, prompt)
@@ -258,13 +266,19 @@ class MainWindow(QMainWindow):
             fd, temp_png = tempfile.mkstemp(prefix="canvas_boiler_", suffix=".png")
             os.close(fd)
             self.canvas.image.save(temp_png, "PNG")
+            print(f"[ai-playable] snapshot={temp_png}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to snapshot canvas:\n{e}")
             return
 
         user_hint = self.ai_hint_input.text().strip()
+        print(f"[ai-playable] user_hint='{user_hint}'")
         sprite_path = None
         sprite_meta = None
+        graph_yaml_text = None
+        graph_path = None
+        component_payload = None
+        component_json_path = None
 
         # 2) Extract sprite (useful for physical/character contracts; harmless otherwise)
         try:
@@ -276,6 +290,7 @@ class MainWindow(QMainWindow):
             sprite_path, meta = extract_main_object_to_png(temp_png, candidate_out)
             # meta: {"x": int, "y": int, "w": int, "h": int}
             sprite_meta = {"path": sprite_path, **meta}
+            print('[ai-playable] sprite_meta', sprite_meta)
         except Exception as e:
             # Sprite extraction is optional; continue without it
             print("Sprite extraction skipped:", e)
@@ -288,6 +303,7 @@ class MainWindow(QMainWindow):
             confidence = choice.get("confidence", 0.0)
             reason = choice.get("reason", "")
             print(f"[Router] contract={contract_id} conf={confidence:.2f} reason={reason}")
+            print(f"[Router] assumptions={choice.get('assumptions')}")
         except Exception as e:
             traceback.print_exc()
             QApplication.restoreOverrideCursor()
@@ -295,18 +311,110 @@ class MainWindow(QMainWindow):
             contract_id = "physical_object"
             QMessageBox.warning(self, "Router Failed",
                                 f"Falling back to '{contract_id}'\nReason: {e}")
+            print("[ai-playable] router failure, fallback contract used")
+
+        # 3.5) Generate component graph and extract per-node sprites
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        contract_spec = CONTRACT_SPECS.get(contract_id, {})
+        graph_nodes = []
+        graph_edges = []
+        try:
+            print("[ai-playable] requesting component graph")
+            graph_yaml_text = generate_component_graph(
+                temp_png,
+                contract_id=contract_id,
+                contract_summary=contract_spec.get("summary", ""),
+                contract_requirements=contract_spec.get("requirements", ""),
+                user_hint=user_hint,
+                model="gpt-5",
+            )
+            graphs_dir = Path(__file__).resolve().parent / "games" / "graphs"
+            graphs_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = graphs_dir / f"graph_{stamp}.yaml"
+            graph_path.write_text(graph_yaml_text, encoding="utf-8")
+            print(f"[ai-playable] graph saved to {graph_path}")
+
+            parsed_graph = None
+            if graph_yaml_text:
+                try:
+                    if yaml is not None:
+                        parsed_graph = yaml.safe_load(graph_yaml_text) or {}
+                        print("[ai-playable] parsed graph via yaml")
+                    else:
+                        parsed_graph = json.loads(graph_yaml_text)
+                        print("[ai-playable] parsed graph via json")
+                except Exception as parse_err:
+                    print("Graph YAML parse failed:", parse_err)
+                    parsed_graph = None
+
+            if isinstance(parsed_graph, dict):
+                graph_nodes = parsed_graph.get("nodes", []) or []
+                graph_edges = parsed_graph.get("edges", []) or []
+                print(f"[ai-playable] graph_nodes={graph_nodes}")
+                print(f"[ai-playable] graph_edges={graph_edges}")
+        except Exception as e:
+            print("Component graph generation failed:", e)
+
+        components = []
+        if graph_nodes:
+            print(f"[ai-playable] extracting components: {len(graph_nodes)} nodes")
+            components_dir = Path(__file__).resolve().parent / "games" / "components"
+            components_dir.mkdir(parents=True, exist_ok=True)
+            for idx, node in enumerate(graph_nodes):
+                bbox = node.get("bbox") if isinstance(node, dict) else None
+                node_id = node.get("id") if isinstance(node, dict) else None
+                label = node.get("label") if isinstance(node, dict) else None
+                print(f"[ai-playable] node idx={idx} id={node_id} bbox={bbox}")
+                if not bbox or not isinstance(bbox, dict):
+                    print("[ai-playable] skipping node due to missing bbox")
+                    continue
+                slug = node_id or f"node_{idx}"
+                comp_path = str(components_dir / f"component_{stamp}_{slug}.png")
+                try:
+                    sprite_file, meta = extract_component_from_bbox(temp_png, bbox, comp_path)
+                    components.append({
+                        "id": slug,
+                        "label": label or slug,
+                        "role": node.get("role", ""),
+                        "description": node.get("description", ""),
+                        "path": sprite_file,
+                        "meta": meta,
+                    })
+                    print(f"[ai-playable] component saved path={sprite_file} meta={meta}")
+                except Exception as comp_err:
+                    print(f"Component extraction failed for {slug}:", comp_err)
+
+        if components:
+            component_payload = {
+                "graph": {
+                    "nodes": graph_nodes,
+                    "edges": graph_edges,
+                },
+                "components": components,
+            }
+            components_dir = Path(__file__).resolve().parent / "games" / "components"
+            components_dir.mkdir(parents=True, exist_ok=True)
+            component_json_path = components_dir / f"components_{stamp}.json"
+            component_json_path.write_text(json.dumps(component_payload, indent=2), encoding="utf-8")
+            print(f"[ai-playable] components json={component_json_path}")
+        else:
+            print("[ai-playable] no components captured")
 
         # 4) Router Step 2: fulfill the chosen contract -> write objects module
         try:
+            print(f"[ai-playable] fulfilling contract {contract_id}")
             module_path = fulfill_contract(
                 image_path=temp_png,
                 contract_id=contract_id,
                 user_hint=user_hint,
                 sprite_meta=sprite_meta,        # None is fine if extraction failed
+                component_graph_yaml=graph_yaml_text,
+                components=component_payload.get("components") if component_payload else None,
                 out_dir="games",
                 base_name="objects",
                 model="gpt-5",
             )
+            print(f"[ai-playable] module_path={module_path}")
         except Exception as e:
             traceback.print_exc()
             QApplication.restoreOverrideCursor()
@@ -328,9 +436,13 @@ class MainWindow(QMainWindow):
         args = [temp_png, "--module", module_path]
         if sprite_path and sprite_meta:
             args += ["--sprite", sprite_path, "--sprite-x", str(sprite_meta["x"]), "--sprite-y", str(sprite_meta["y"])]
+        if component_json_path and component_json_path.is_file():
+            args += ["--components", str(component_json_path)]
+            print(f"[ai-playable] added components file {component_json_path}")
 
         global LAUNCH_BOILER_AFTER_QT
         LAUNCH_BOILER_AFTER_QT = (shell_path, args)
+        print(f"[ai-playable] launch args={args}")
 
         # Hand off to the boiler
         self.close()

@@ -21,7 +21,7 @@ This boilerplate:
 """
 
 from __future__ import annotations
-import sys, os, importlib.util, time, tempfile
+import sys, os, importlib.util, time, tempfile, json
 import pygame
 
 # ---------- Audio helpers (safe for mono/stereo mixers) ----------
@@ -38,6 +38,7 @@ def _parse_args(argv):
     sprite_path = None
     sprite_x = None
     sprite_y = None
+    components_path = None
 
     if len(argv) >= 2:
         img_path = argv[1]
@@ -51,9 +52,11 @@ def _parse_args(argv):
             sprite_x = int(argv[i+1]); i += 2
         elif argv[i] == "--sprite-y" and i+1 < len(argv):
             sprite_y = int(argv[i+1]); i += 2
+        elif argv[i] == "--components" and i+1 < len(argv):
+            components_path = argv[i+1]; i += 2
         else:
             i += 1
-    return img_path, module_path, sprite_path, sprite_x, sprite_y
+    return img_path, module_path, sprite_path, sprite_x, sprite_y, components_path
 
 
 def init_audio(force_channels=1):
@@ -129,10 +132,10 @@ class _FallbackGame:
         screen.blit(txt, (10, 10))
 
 def main():
-    img_path, module_path, sprite_path, sprite_x, sprite_y = _parse_args(sys.argv)
+    img_path, module_path, sprite_path, sprite_x, sprite_y, components_path = _parse_args(sys.argv)
     if not img_path or not module_path:
         print("Usage: python game_shell.py bg.png --module path/to/objects.py "
-              "[--sprite sprite.png --sprite-x N --sprite-y N]")
+              "[--sprite sprite.png --sprite-x N --sprite-y N] [--components components.json]")
         sys.exit(2)
 
     pygame.init()
@@ -150,6 +153,7 @@ def main():
     pygame.display.set_caption("Pygame Boiler")
     background = pygame.Surface((W, H)).convert()
     background.fill((255, 255, 255))
+    print(f"[shell] window size set to {W}x{H}")
 
     # ---- Build context passed to generated module ----
     context = {
@@ -160,6 +164,64 @@ def main():
         },
         "image_path": img_path,
     }
+
+    components_data = None
+    if components_path and os.path.isfile(components_path):
+        try:
+            with open(components_path, "r", encoding="utf-8") as f:
+                components_data = json.load(f)
+            print(f"[shell] loaded components json {components_path}")
+        except Exception as e:
+            print("[shell] failed to load components json:", e)
+
+    if components_data:
+        graph = components_data.get("graph")
+        if isinstance(graph, dict):
+            context["graph"] = graph
+            print(f"[shell] graph nodes count={len(graph.get('nodes', []))}")
+
+        raw_components = components_data.get("components")
+        if isinstance(raw_components, list):
+            loaded_components = []
+            for idx, comp in enumerate(raw_components):
+                if not isinstance(comp, dict):
+                    continue
+                path = comp.get("path")
+                if not path or not os.path.isfile(path):
+                    print(f"[shell] component path missing: {path}")
+                    continue
+                try:
+                    surf = pygame.image.load(path).convert_alpha()
+                except Exception as e:
+                    print(f"[shell] failed to load component sprite '{path}':", e)
+                    continue
+
+                rect = surf.get_rect()
+                meta = comp.get("meta") if isinstance(comp.get("meta"), dict) else {}
+                rect.x = int(meta.get("x", rect.x))
+                rect.y = int(meta.get("y", rect.y))
+
+                loaded_components.append({
+                    "id": comp.get("id", f"component_{idx}"),
+                    "label": comp.get("label", ""),
+                    "role": comp.get("role", ""),
+                    "description": comp.get("description", ""),
+                    "surface": surf,
+                    "rect": rect,
+                    "meta": {
+                        "x": rect.x,
+                        "y": rect.y,
+                        "w": rect.width,
+                        "h": rect.height,
+                    },
+                    "path": path,
+                })
+                print(f"[shell] component loaded id={loaded_components[-1]['id']} rect={rect}")
+            if loaded_components:
+                context["components"] = loaded_components
+                print(f"[shell] components added to context count={len(loaded_components)}")
+            else:
+                print("[shell] no components loaded from json")
 
     # Optional sprite (for physical/character/vehicle contracts)
     if sprite_path and os.path.isfile(sprite_path):

@@ -20,6 +20,7 @@ Notes:
 from __future__ import annotations
 import os
 from pathlib import Path
+import tempfile
 from typing import Tuple, Dict, Optional
 
 import cv2
@@ -78,10 +79,13 @@ def extract_main_object_to_png(
     if not os.path.isfile(bg_path):
         raise FileNotFoundError(bg_path)
 
+    print(f"[object-extract] extracting main object from {bg_path}")
+
     bgr = cv2.imread(bg_path, cv2.IMREAD_COLOR)
     if bgr is None:
         raise RuntimeError(f"Failed to read image: {bg_path}")
     H, W = bgr.shape[:2]
+    print(f"[object-extract] canvas size: {W}x{H}")
 
     # 1) Grayscale + mild blur to stabilize edges
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -104,6 +108,7 @@ def extract_main_object_to_png(
 
     x, y, rw, rh = cv2.boundingRect(best)
     area = rw * rh
+    print(f"[object-extract] best contour rect={(x, y, rw, rh)} area={area}")
     if area < min_area_ratio * (W * H):
         raise RuntimeError("Detected object is too small; likely noise")
 
@@ -141,7 +146,93 @@ def extract_main_object_to_png(
         cv2.imwrite(debug_out, alpha_color)
 
     meta = {"x": int(x), "y": int(y), "w": int(rw), "h": int(rh)}
+    print(f"[object-extract] sprite saved to {out_path}")
+    print(f"[object-extract] meta={meta}")
     return out_path, meta
+
+
+def extract_component_from_bbox(
+    bg_path: str,
+    bbox: Dict[str, int],
+    out_path: str,
+    min_area_ratio: float = 0.0025,
+) -> Tuple[str, Dict[str, int]]:
+    """
+    Crop a rectangular region and attempt to extract the foreground object within it.
+
+    Falls back to a plain rectangular crop if contour extraction fails.
+    Returns the sprite path and absolute coordinates (x, y, w, h) relative to the
+    original background image.
+    """
+    if not os.path.isfile(bg_path):
+        raise FileNotFoundError(bg_path)
+    if not bbox:
+        raise ValueError("bbox is required")
+
+    x = int(bbox.get("x", 0))
+    y = int(bbox.get("y", 0))
+    w = int(bbox.get("w", 0))
+    h = int(bbox.get("h", 0))
+    if w <= 0 or h <= 0:
+        raise ValueError(f"Invalid bbox dimensions: {bbox}")
+
+    print(f"[component-extract] bbox={bbox} bg={bg_path}")
+
+    bgr = cv2.imread(bg_path, cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise RuntimeError(f"Failed to read image: {bg_path}")
+
+    H, W = bgr.shape[:2]
+    x0 = max(0, min(W - 1, x))
+    y0 = max(0, min(H - 1, y))
+    x1 = max(0, min(W, x0 + w))
+    y1 = max(0, min(H, y0 + h))
+    if x1 <= x0 or y1 <= y0:
+        raise ValueError(f"BBox outside image bounds: {bbox}")
+
+    crop = bgr[y0:y1, x0:x1]
+    fd, temp_path = tempfile.mkstemp(prefix="component_", suffix=".png")
+    os.close(fd)
+    try:
+        cv2.imwrite(temp_path, crop)
+        candidate_path = out_path
+        out_dir = Path(candidate_path).parent
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            sprite_path, meta = extract_main_object_to_png(
+                temp_path,
+                out_path=candidate_path,
+                min_area_ratio=min_area_ratio,
+            )
+            meta = {
+                "x": x0 + int(meta["x"]),
+                "y": y0 + int(meta["y"]),
+                "w": int(meta["w"]),
+                "h": int(meta["h"]),
+            }
+            print(f"[component-extract] contour success path={sprite_path} meta={meta}")
+            return sprite_path, meta
+        except RuntimeError:
+            print("[component-extract] contour failed, using raw crop")
+            rgba = cv2.cvtColor(crop, cv2.COLOR_BGR2BGRA)
+            rgba[:, :, 3] = 255
+            ok = cv2.imwrite(candidate_path, rgba)
+            if not ok:
+                raise RuntimeError(f"Failed to write component PNG: {candidate_path}")
+            meta = {
+                "x": x0,
+                "y": y0,
+                "w": x1 - x0,
+                "h": y1 - y0,
+            }
+            print(f"[component-extract] fallback path={candidate_path} meta={meta}")
+            return candidate_path, meta
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 
 # ---------- CLI for quick testing ----------

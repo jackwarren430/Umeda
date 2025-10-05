@@ -34,7 +34,7 @@ from __future__ import annotations
 import os, re, json, base64, mimetypes
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from openai import OpenAI, BadRequestError
 
 
@@ -75,7 +75,7 @@ MODULE INTERFACE (MUST IMPLEMENT)
           draw(screen)           # draw your overlays/sprites; background is already drawn
         '''
 - No main loop, no file/network I/O, no blocking calls, no external dependencies beyond pygame/numpy.
-- The module must fit in ONE small file and be deterministic and readable.
+- The module must fit in ONE file and be deterministic and readable.
 - Return ONLY one fenced python code block. No prose.
 """
 
@@ -239,6 +239,16 @@ Environment (provided by shell):
         'rect': pygame.Rect initial placement,
         'meta': {{'x': int, 'y': int, 'w': int, 'h': int}}
     }}
+    components (optional list): [{{
+        'id': str,
+        'label': str,
+        'role': str,
+        'description': str,
+        'surface': pygame.Surface,
+        'rect': pygame.Rect,
+        'meta': {{'x': int, 'y': int, 'w': int, 'h': int}}
+    }}]
+    graph (optional dict): {{'nodes': [...], 'edges': [...]}}
 
 Follow ALL constraints below.
 
@@ -318,6 +328,8 @@ def fulfill_contract(
     contract_id: str,
     user_hint: str = "",
     sprite_meta: Optional[Dict[str, Any]] = None,
+    component_graph_yaml: Optional[str] = None,
+    components: Optional[List[Dict[str, Any]]] = None,
     out_dir: str = "games",
     base_name: str = "objects",
     model: str = "gpt-5",
@@ -325,6 +337,9 @@ def fulfill_contract(
     """
     Generate the contract-specific module.
     Returns the path to ./games/<base_name>_YYYYmmdd_HHMMSS.py
+
+    component_graph_yaml: raw YAML text describing the DAG (optional)
+    components: list of component dicts with sprite metadata (optional)
     """
     p = Path(image_path)
     if not p.is_file():
@@ -332,6 +347,8 @@ def fulfill_contract(
 
     prompt = build_fulfillment_prompt(contract_id, user_hint)
     data_url = _to_data_url(image_path)
+    print(f"[fulfill] contract_id={contract_id} image={image_path}")
+    print(f"[fulfill] user_hint='{user_hint}'")
 
     # Build input messages with image + optional sprite meta (as JSON text)
     content = [
@@ -340,6 +357,16 @@ def fulfill_contract(
     ]
     if sprite_meta:
         content.append({"type": "input_text", "text": "Sprite metadata (JSON): " + json.dumps(sprite_meta)})
+        print(f"[fulfill] sprite_meta={sprite_meta}")
+    if component_graph_yaml:
+        content.append({"type": "input_text", "text": "Component graph (YAML):\n" + component_graph_yaml})
+        preview = component_graph_yaml.splitlines()[:10]
+        print("[fulfill] graph preview:")
+        for line in preview:
+            print("   ", line)
+    if components:
+        content.append({"type": "input_text", "text": "Component sprites (JSON): " + json.dumps(components)})
+        print(f"[fulfill] components count={len(components)}")
 
     client = OpenAI()
     try:
@@ -363,4 +390,5 @@ def fulfill_contract(
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_path = out_dir_path / f"{base_name}_{contract_id}_{stamp}.py"
     script_path.write_text(code + "\n", encoding="utf-8")
+    print(f"[fulfill] wrote module to {script_path}")
     return str(script_path)

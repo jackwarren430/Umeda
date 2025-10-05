@@ -1,0 +1,56 @@
+nodes:
+  - id: button-panel
+    label: Button Panel
+    role: container
+    description: Rectangular panel that visually houses the button; non-interactive backdrop for hit testing alignment.
+    bbox:
+      x: 160
+      y: 70
+      w: 220
+      h: 260
+  - id: button-hotspot
+    label: Push Button
+    role: control
+    description: Circular button on the panel; highlights on hover and on click sends an activation to light the bulb. 'R' resets to off.
+    bbox:
+      x: 215
+      y: 150
+      w: 100
+      h: 120
+  - id: cable-curve
+    label: Cable
+    role: connector
+    description: Decorative curved wire between panel and bulb; used as a visual connector, not interactive.
+    bbox:
+      x: 230
+      y: 305
+      w: 420
+      h: 170
+  - id: bulb-lamp
+    label: Lightbulb
+    role: indicator
+    description: Bulb and base; illuminates when activated by the button and dims on reset.
+    bbox:
+      x: 620
+      y: 60
+      w: 170
+      h: 260
+  - id: hud-help
+    label: Help HUD
+    role: hud
+    description: Small overlay text hint: "Click button • R to reset".
+    bbox:
+      x: 20
+      y: 12
+      w: 280
+      h: 28
+edges:
+  - from: button-hotspot
+    to: bulb-lamp
+    relation: activates
+  - from: button-panel
+    to: button-hotspot
+    relation: contains
+  - from: cable-curve
+    to: bulb-lamp
+    relation: connects to

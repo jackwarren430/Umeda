@@ -1,0 +1,287 @@
+nodes:
+  - id: screen-bounds
+    label: Screen
+    role: container
+    description: World bounds from screen.get_size(); non-interactive container for layout and hit tests.
+    bbox:
+      x: 0
+      y: 0
+      w: 1037
+      h: 529
+  - id: title-label
+    label: Piano Title
+    role: indicator
+    description: Static text "Piano" near the top-left; decorative and non-interactive.
+    bbox:
+      x: 220
+      y: 80
+      w: 260
+      h: 90
+  - id: power-toggle
+    label: Power On
+    role: control
+    description: Rounded "on" button; must be clicked to enable sound output for all keys. Highlights on hover.
+    bbox:
+      x: 720
+      y: 90
+      w: 140
+      h: 70
+  - id: hint-hud
+    label: HUD Hint
+    role: indicator
+    description: Small overlay text that says "Click keys • ESC to quit • R to reset".
+    bbox:
+      x: 380
+      y: 460
+      w: 300
+      h: 30
+  - id: keyboard-frame
+    label: Keyboard
+    role: container
+    description: Inner rounded rectangle containing one-octave keys; used as the interaction region group.
+    bbox:
+      x: 250
+      y: 250
+      w: 560
+      h: 190
+  - id: white-key-c
+    label: C
+    role: control
+    description: White key C4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 250
+      y: 250
+      w: 80
+      h: 190
+  - id: white-key-d
+    label: D
+    role: control
+    description: White key D4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 330
+      y: 250
+      w: 80
+      h: 190
+  - id: white-key-e
+    label: E
+    role: control
+    description: White key E4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 410
+      y: 250
+      w: 80
+      h: 190
+  - id: white-key-f
+    label: F
+    role: control
+    description: White key F4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 490
+      y: 250
+      w: 80
+      h: 190
+  - id: white-key-g
+    label: G
+    role: control
+    description: White key G4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 570
+      y: 250
+      w: 80
+      h: 190
+  - id: white-key-a
+    label: A
+    role: control
+    description: White key A4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 650
+      y: 250
+      w: 80
+      h: 190
+  - id: white-key-b
+    label: B
+    role: control
+    description: White key B4; hover highlight and click to trigger note when power is on.
+    bbox:
+      x: 730
+      y: 250
+      w: 80
+      h: 190
+  - id: black-key-cs
+    label: C#
+    role: control
+    description: Black key C#4/Db4; hover highlight and click to trigger sharp note when power is on.
+    bbox:
+      x: 307
+      y: 250
+      w: 46
+      h: 120
+  - id: black-key-ds
+    label: D#
+    role: control
+    description: Black key D#4/Eb4; hover highlight and click to trigger sharp note when power is on.
+    bbox:
+      x: 387
+      y: 250
+      w: 46
+      h: 120
+  - id: black-key-fs
+    label: F#
+    role: control
+    description: Black key F#4/Gb4; hover highlight and click to trigger sharp note when power is on.
+    bbox:
+      x: 547
+      y: 250
+      w: 46
+      h: 120
+  - id: black-key-gs
+    label: G#
+    role: control
+    description: Black key G#4/Ab4; hover highlight and click to trigger sharp note when power is on.
+    bbox:
+      x: 627
+      y: 250
+      w: 46
+      h: 120
+  - id: black-key-as
+    label: A#
+    role: control
+    description: Black key A#4/Bb4; hover highlight and click to trigger sharp note when power is on.
+    bbox:
+      x: 707
+      y: 250
+      w: 46
+      h: 120
+  - id: audio-gate
+    label: Audio Gate
+    role: connector
+    description: Enables or blocks note events based on the power toggle; debounces clicks and manages polyphony.
+    bbox:
+      x: 12
+      y: 10
+      w: 1
+      h: 1
+  - id: tone-synth
+    label: Tone Synth
+    role: connector
+    description: Uses context audio helpers to play sine tones for notes C4–B4 and sharps; lightweight envelope.
+    bbox:
+      x: 16
+      y: 10
+      w: 1
+      h: 1
+  - id: reset-handler
+    label: Reset
+    role: control
+    description: Keyboard shortcut 'R' clears held notes and returns to defaults; non-visible.
+    bbox:
+      x: 8
+      y: 10
+      w: 1
+      h: 1
+  - id: sprite-overlay
+    label: Sprite Overlay
+    role: indicator
+    description: Optional decorative sprite if provided in context; ignored for hit tests.
+    bbox:
+      x: 0
+      y: 0
+      w: 1037
+      h: 529
+edges:
+  - from: screen-bounds
+    to: keyboard-frame
+    relation: contains
+  - from: screen-bounds
+    to: power-toggle
+    relation: contains
+  - from: screen-bounds
+    to: title-label
+    relation: displays
+  - from: screen-bounds
+    to: hint-hud
+    relation: displays
+  - from: screen-bounds
+    to: sprite-overlay
+    relation: decorates
+  - from: keyboard-frame
+    to: white-key-c
+    relation: contains
+  - from: keyboard-frame
+    to: white-key-d
+    relation: contains
+  - from: keyboard-frame
+    to: white-key-e
+    relation: contains
+  - from: keyboard-frame
+    to: white-key-f
+    relation: contains
+  - from: keyboard-frame
+    to: white-key-g
+    relation: contains
+  - from: keyboard-frame
+    to: white-key-a
+    relation: contains
+  - from: keyboard-frame
+    to: white-key-b
+    relation: contains
+  - from: keyboard-frame
+    to: black-key-cs
+    relation: contains
+  - from: keyboard-frame
+    to: black-key-ds
+    relation: contains
+  - from: keyboard-frame
+    to: black-key-fs
+    relation: contains
+  - from: keyboard-frame
+    to: black-key-gs
+    relation: contains
+  - from: keyboard-frame
+    to: black-key-as
+    relation: contains
+  - from: power-toggle
+    to: audio-gate
+    relation: enables
+  - from: reset-handler
+    to: audio-gate
+    relation: resets
+  - from: white-key-c
+    to: audio-gate
+    relation: triggers note
+  - from: white-key-d
+    to: audio-gate
+    relation: triggers note
+  - from: white-key-e
+    to: audio-gate
+    relation: triggers note
+  - from: white-key-f
+    to: audio-gate
+    relation: triggers note
+  - from: white-key-g
+    to: audio-gate
+    relation: triggers note
+  - from: white-key-a
+    to: audio-gate
+    relation: triggers note
+  - from: white-key-b
+    to: audio-gate
+    relation: triggers note
+  - from: black-key-cs
+    to: audio-gate
+    relation: triggers note
+  - from: black-key-ds
+    to: audio-gate
+    relation: triggers note
+  - from: black-key-fs
+    to: audio-gate
+    relation: triggers note
+  - from: black-key-gs
+    to: audio-gate
+    relation: triggers note
+  - from: black-key-as
+    to: audio-gate
+    relation: triggers note
+  - from: audio-gate
+    to: tone-synth
+    relation: routes to
